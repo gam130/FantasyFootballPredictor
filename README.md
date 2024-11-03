@@ -1,4 +1,4 @@
-# FantasyFootballPredictor
+# FantasyFootballPredictor (WIP)
 Make predictions for fantasy based on Vegas betting lines
 
 ### To run:
