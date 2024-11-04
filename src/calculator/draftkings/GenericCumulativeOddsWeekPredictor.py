@@ -13,10 +13,18 @@
 # 3+ : +700
 #
 # Note how a player that scores 2+ TDs will also hit for the 1+ bet.
-#
+
+
+# These are statistics where the true value of the statistic is likely 
+# to not be one of the exact numbers in the line. Mostly for yardage totals 
+# TODO: Figure out what actually should go here, if anything
+TRUE_VALUE_UNLIKELY = ['PASS_YDS', 'RUSH_YDS', 'REC_YDS'] 
+MIN_ASSUMPTION_FACTOR = 1.0
+
 class GenericCumulativeOddsWeekPredictor:
-    def __init__(self, data, fantasy_value):
+    def __init__(self, data, fantasy_value, statistic = ''):
         self.data = data
+        self.adjust_probs = statistic in TRUE_VALUE_UNLIKELY
         self.fantasy_value = fantasy_value
 
     def _parse_player_cumulative_odds_json(self, name: str):
@@ -51,44 +59,58 @@ class GenericCumulativeOddsWeekPredictor:
         return devigged_probabilities
     
     def _find_assumptions(self, implied_probabilities):
-        nums = [int(k.replace('+', '')) for k in implied_probabilities.keys()]
-        nums = sorted(nums)
+        nums = sorted(implied_probabilities.keys())
 
         if len(nums) < 2:
             raise Exception("Error: Cumulative line only contains one line")
         
         # Assume that statistic will be over this 100% of time
-        min_assumption = nums[0] - (nums[1] - nums[0])
+        min_assumption = nums[0] - (MIN_ASSUMPTION_FACTOR * (nums[1] - nums[0]))
 
         return min_assumption
 
+    def _adjust_probabiltiies(self, exact_probabilities):
+        stat_values = sorted(exact_probabilities.keys())
+        for i in range(len(stat_values) - 1):
+            new_stat_value = (stat_values[i] + stat_values[i + 1]) / 2
+            exact_probabilities[new_stat_value] = exact_probabilities.pop(stat_values[i])
+
+        adjusted_max_stat = stat_values[-1] + ((stat_values[-1] - stat_values[-2]) / 2)
+        exact_probabilities[adjusted_max_stat] = exact_probabilities.pop(stat_values[-1])
+
+        return exact_probabilities   
+
     def _convert_odds_dict_to_implied_probability(self, oddsDict, devig: bool = False):
         implied_probabilities = {
-            value: self._convert_to_implied_probability(odds) 
+            int(value.replace('+', '')): self._convert_to_implied_probability(odds) 
             for value, odds in oddsDict.items()
         }
 
         if devig:
             implied_probabilities = self._devig_multiplicative(implied_probabilities)
 
+        # Assume 100% chance to for at least some value, assign only after adjusting lines
         assumed_min = self._find_assumptions(implied_probabilities)
 
-        # Assume 100% chance to for at least some value
-        implied_probabilities[str(assumed_min) + '+'] = 1.00
+        # Better represent the true expectation at each odd (primarily for yardage lines)
+        if self.adjust_probs:
+            implied_probabilities = self._adjust_probabiltiies(implied_probabilities)
+
+        # Assigning min from earlier
+        implied_probabilities[assumed_min] = 1.00
+
         return implied_probabilities
 
     def _convert_cumulative_to_exact(self, cumulative_probabilities):
-        cumulative_probabilities = {int(k.replace('+', '')): v for k, v in cumulative_probabilities.items()}
         exact_probabilities = {}
-        cumulative_probabilities_keys = sorted(list(cumulative_probabilities.keys()))
+        cumulative_probabilities_keys = sorted(cumulative_probabilities.keys())
         for i in range(len(cumulative_probabilities_keys) - 1):
             stat_value = cumulative_probabilities_keys[i]
             next_highest_stat_value = cumulative_probabilities_keys[i + 1]
             exact_probabilities[stat_value] = cumulative_probabilities[stat_value] - cumulative_probabilities[next_highest_stat_value]
 
         upper_range = max(cumulative_probabilities_keys)
-        exact_probabilities[upper_range] = cumulative_probabilities[upper_range]
-
+        exact_probabilities[upper_range] = cumulative_probabilities[upper_range]        
         return exact_probabilities
 
     def _find_expected_value(self, exact_probabilities):
