@@ -18,11 +18,11 @@ DEFAULT_HEADERS = {
 
 # Endpoints
 PASSING_TDS_ENDPOINT = "https://sportsbook-nash.draftkings.com/api/sportscontent/dkuswatl/v1/leagues/88808/categories/1000/subcategories/15987"
-PASSING_YDS_ENDPOINT = "https://sportsbook-nash.draftkings.com/api/sportscontent/dkuswatl/v1/leagues/88808/categories/1000/subcategories/9524"
-
+PASSING_YDS_ENDPOINT = "https://sportsbook-nash.draftkings.com/api/sportscontent/dkuswatl/v1/leagues/88808/categories/1000/subcategories/14119"
+RUSHING_YDS_ENDPOINT = "https://sportsbook-nash.draftkings.com/api/sportscontent/dkuswatl/v1/leagues/88808/categories/1001/subcategories/14118"
 
 # Handles requests for statistics. This is a growing list
-# Statistics can be ['PASS_YDS', 'PASS_TDS', ...]
+# Statistics can be ['PASS_YDS', 'PASS_TDS', 'RUSH_YDS' ...]
 class DraftKingsRequest:
     def __init__(self, request):
       self.request = request
@@ -71,11 +71,25 @@ class DraftKingsRequest:
         """
         return self.get_generic_draftkings_request(url=PASSING_YDS_ENDPOINT, headers=headers)
     
+    def get_draftkings_rushing_yds(self, headers: dict = DEFAULT_HEADERS):
+        """
+        Retrieves rushing yards data from DraftKings.
+
+        Args:
+            headers (dict): Optional. Custom headers for the request, defaults to DEFAULT_HEADERS.
+
+        Returns:
+            dict or str: Passing touchdowns data in JSON format if the request is successful,
+                            otherwise an error message with the HTTP status code.
+        """
+        return self.get_generic_draftkings_request(url=RUSHING_YDS_ENDPOINT, headers=headers)
+    
     def execute(self):
 
         requestHandler = {
             'PASS_TDS' : self.get_draftkings_passing_tds,
             'PASS_YDS' : self.get_draftkings_passing_yds,
+            'RUSH_YDS' : self.get_draftkings_rushing_yds,
         }
 
         if self.request not in requestHandler:

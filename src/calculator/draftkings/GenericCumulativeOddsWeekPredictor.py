@@ -1,11 +1,25 @@
-
-
-class PassingTDsWeekPredictor:
-    def __init__(self, data, fantasy_value = 4):
+# Predict statistics that have cumulative lines
+#
+# This is useful for categories that have separate lines
+# that accumulate into each other. This means a player that hits
+# for a less likely line is guaranteed to hit for a lower, more-
+# likely line
+#
+# An example of such a line could be pass TDs, where a player could
+# have the following odds:
+#
+# 1+ : -150
+# 2+ : +300 
+# 3+ : +700
+#
+# Note how a player that scores 2+ TDs will also hit for the 1+ bet.
+#
+class GenericCumulativeOddsWeekPredictor:
+    def __init__(self, data, fantasy_value):
         self.data = data
         self.fantasy_value = fantasy_value
 
-    def _parse_qb_passing_tds_json(self, name: str):
+    def _parse_player_cumulative_odds_json(self, name: str):
         selections = self.data["selections"]
         odds = {}
         for s in selections:
@@ -35,41 +49,59 @@ class PassingTDsWeekPredictor:
         }
         
         return devigged_probabilities
+    
+    def _find_assumptions(self, implied_probabilities):
+        nums = [int(k.replace('+', '')) for k in implied_probabilities.keys()]
+        nums = sorted(nums)
 
-    def _convert_odds_dict_to_implied_probability(self, oddsDict, atLeast: int = 0, devig: bool = False):
+        if len(nums) < 2:
+            raise Exception("Error: Cumulative line only contains one line")
+        
+        # Assume that statistic will be over this 100% of time
+        min_assumption = nums[0] - (nums[1] - nums[0])
+
+        return min_assumption
+
+    def _convert_odds_dict_to_implied_probability(self, oddsDict, devig: bool = False):
         implied_probabilities = {
-            tds: self._convert_to_implied_probability(odds) 
-            for tds, odds in oddsDict.items()
+            value: self._convert_to_implied_probability(odds) 
+            for value, odds in oddsDict.items()
         }
 
         if devig:
             implied_probabilities = self._devig_multiplicative(implied_probabilities)
-        
-        implied_probabilities[str(atLeast) + '+'] = 1.00  # 100% chance to for at least 0 TDs
 
+        assumed_min = self._find_assumptions(implied_probabilities)
+
+        # Assume 100% chance to for at least some value
+        implied_probabilities[str(assumed_min) + '+'] = 1.00
         return implied_probabilities
 
     def _convert_cumulative_to_exact(self, cumulative_probabilities):
-        cumulative_probabilities = {int(k[0]): v for k, v in cumulative_probabilities.items()}
+        cumulative_probabilities = {int(k.replace('+', '')): v for k, v in cumulative_probabilities.items()}
         exact_probabilities = {}
-        upper_td_range = max(cumulative_probabilities)  # some have 4+ td props, some have only 3
-        for i in range(0, upper_td_range):
-            exact_probabilities[i] = cumulative_probabilities[i] - cumulative_probabilities[i + 1]
+        cumulative_probabilities_keys = sorted(list(cumulative_probabilities.keys()))
+        for i in range(len(cumulative_probabilities_keys) - 1):
+            stat_value = cumulative_probabilities_keys[i]
+            next_highest_stat_value = cumulative_probabilities_keys[i + 1]
+            exact_probabilities[stat_value] = cumulative_probabilities[stat_value] - cumulative_probabilities[next_highest_stat_value]
 
-        exact_probabilities[upper_td_range] = cumulative_probabilities[upper_td_range]
+        upper_range = max(cumulative_probabilities_keys)
+        exact_probabilities[upper_range] = cumulative_probabilities[upper_range]
+
         return exact_probabilities
 
-    def _find_expected_value_passing_tds(self, exact_probabilities):
+    def _find_expected_value(self, exact_probabilities):
         ev = 0
         for k, v in exact_probabilities.items():
             ev += (k * v)
 
         return ev
 
-    def _find_expected_fantasy_points_passing_tds(self, statistic_value):
+    def _find_expected_fantasy_points(self, statistic_value):
         return statistic_value * self.fantasy_value
 
-    def find_expected_passing_tds(self, name: str, devig: bool = False):
+    def get_player_expectations(self, name: str, devig: bool = False):
         """
         Calculates the expected passing touchdowns for a given player based on provided data.
         
@@ -85,12 +117,12 @@ class PassingTDsWeekPredictor:
         Returns:
             float: The expected number of passing touchdowns for the player.
         """
-        qb_passing_td_odds = self._parse_qb_passing_tds_json(name)
-        implied_probabilities = self._convert_odds_dict_to_implied_probability(qb_passing_td_odds, devig=devig)
-        exact_qb_td_probabilities = self._convert_cumulative_to_exact(implied_probabilities)
-        return self._find_expected_value_passing_tds(exact_qb_td_probabilities)
+        cumulative_odds = self._parse_player_cumulative_odds_json(name)
+        implied_probabilities = self._convert_odds_dict_to_implied_probability(cumulative_odds, devig=devig)
+        exact_probabilities = self._convert_cumulative_to_exact(implied_probabilities)
+        return self._find_expected_value(exact_probabilities)
 
-    def get_all_expected_passing_tds(self, devig: bool = False):
+    def get_all_expectations(self, devig: bool = False):
         """
         Retrieves the expected passing touchdowns for all players in the provided data.
 
@@ -105,16 +137,16 @@ class PassingTDsWeekPredictor:
         Returns:
             dict: A dictionary where keys are player names and values are their expected passing touchdowns.
         """
-        expected_tds = {}
+        expectations = {}
         for s in self.data["selections"]:
             participants = s["participants"]
             for p in participants:
-                if p["name"] not in expected_tds:
-                    expected_tds[p["name"]] = self.find_expected_passing_tds(p["name"], devig=devig)
+                if p["name"] not in expectations:
+                    expectations[p["name"]] = self.get_player_expectations(p["name"], devig=devig)
 
-        return expected_tds
+        return expectations
 
-    def get_all_expected_passing_td_fantasy_points(self, devig: bool = False):
+    def get_all_expected_fantasy_points(self, devig: bool = False):
         """
         Calculates the expected fantasy points from passing touchdowns for all players in the provided data.
 
@@ -129,9 +161,9 @@ class PassingTDsWeekPredictor:
         Returns:
             dict: A dictionary where keys are player names and values are their expected fantasy points from passing touchdowns.
         """
-        expected_tds = self.get_all_expected_passing_tds(devig=devig)
+        expectations = self.get_all_expectations(devig=devig)
         expected_fantasy_points = {
-            player: self._find_expected_fantasy_points_passing_tds(tds)
-            for player, tds in expected_tds.items()
+            player: self._find_expected_fantasy_points(value)
+            for player, value in expectations.items()
         }
         return expected_fantasy_points
